@@ -231,9 +231,9 @@ def simular_sistema(params):
                 t_at = -params['m_pedir'] * math.log(1 - rnd_a)
             elif tipo == "Devolver":
                 # [ALGORITMO]: Distribución Uniforme Continua. random.uniform() aplica la fórmula: a + RND * (b - a)
-                t_at = random.uniform(params['u_dev_a'], params['u_dev_b'])
+                t_at = params['u_dev_a'] + rnd_a * (params['u_dev_b'] - params['u_dev_a'])
             else:
-                t_at = random.uniform(params['u_cons_a'], params['u_cons_b'])
+                t_at = params['u_cons_a'] + rnd_a * (params['u_cons_b'] - params['u_cons_a'])
 
             registrar_fila(f"Inicia Atenc ({tipo})", rnd_atenc=rnd_a, t_atenc=t_at)
 
@@ -268,9 +268,9 @@ def simular_sistema(params):
             rnd_p = random.random()
             paginas_target = params['u_pag_a'] + rnd_p * (params['u_pag_b'] - params['u_pag_a'])
 
-            if paginas_target < 200:
+            if paginas_target <= 200:
                 k = params['k1']
-            elif paginas_target < 300:
+            elif paginas_target <= 300:
                 k = params['k2']
             else:
                 k = params['k3']
@@ -342,7 +342,7 @@ def simular_sistema(params):
                 cliente.estado = "Atend. (Dev)"
 
                 rnd_a2 = random.random()
-                t_at2 = random.uniform(params['u_dev_a'], params['u_dev_b'])
+                t_at2 = params['u_dev_a'] + rnd_a2 * (params['u_dev_b'] - params['u_dev_a'])
                 registrar_fila("Inicia Atenc (Dev Post-Lect)", rnd_atenc=rnd_a2, t_atenc=t_at2)
                 yield env.timeout(t_at2)
 
@@ -509,9 +509,12 @@ class VentanaSimulacion:
             ]),
             ("Tiempos de Atención (min)", [
                 ("Media Pedir Exp(-)", "media_pedir", 6.0),
-                ("Unif. Dev A/B", "unif_dev_a", 1.5),
-                ("Unif. Cons A/B", "unif_cons_a", 2.0),
-                ("Unif. Pág A/B", "unif_pag_a", 100)
+                ("Unif. Dev A", "unif_dev_a", 1.5),
+                ("Unif. Dev B", "unif_dev_b", 2.5),
+                ("Unif. Cons A", "unif_cons_a", 2.0),
+                ("Unif. Cons B", "unif_cons_b", 5.0),
+                ("Unif. Pág A", "unif_pag_a", 100),
+                ("Unif. Pág B", "unif_pag_b", 350),
             ]),
             ("Constantes Integración K", [
                 ("K (Pág < 200)", "k1", 100),
@@ -520,13 +523,7 @@ class VentanaSimulacion:
             ])
         ]
 
-        # [COMANDO]: ttk.Entry es un campo de texto interactivo.
-        self.vars['unif_dev_b'] = ttk.Entry(self.root);
-        self.vars['unif_dev_b'].insert(0, "2.5")
-        self.vars['unif_cons_b'] = ttk.Entry(self.root);
-        self.vars['unif_cons_b'].insert(0, "5.0")
-        self.vars['unif_pag_b'] = ttk.Entry(self.root);
-        self.vars['unif_pag_b'].insert(0, "350")
+
 
         col_offset = 0
         for seccion, campos in configs:
