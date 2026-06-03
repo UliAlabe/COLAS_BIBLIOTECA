@@ -92,30 +92,14 @@ def simular_sistema(params):
     def registrar_fila(evento_str, rnd_tipo="", tipo_atenc="", rnd_atenc="", t_atenc="", rnd_queda="", se_queda="",
                        rnd_pag="", paginas="", k_aplicado="", t_lect="", forzar=False):
         """
-        [ALGORITMO]: "Snapshot" o auditoría del sistema.
-        [POR QUÉ]: SimPy corre internamente; no genera tablas de Excel. Esta función le saca una "foto"
-        a todas las variables en el instante exacto en que ocurre un evento y arma la fila del vector.
+        [ALGORITMO]: "Snapshot" o auditoría del sistema con AGRUPACIÓN POR INSTANTE.
         """
         reloj = env.now  # Obtiene el minuto exacto actual.
 
-        # [ALGORITMO]: Filtro de Memoria O(1) (Parámetros i, j).
-        # [POR QUÉ]: Procesar y convertir a string 100,000 iteraciones tilda la PC.
-        # Solo guardamos la fila si cumple los filtros o si es la última fila forzada.
-        # Este es el "salvavidas" de la memoria RAM. En vez de guardar las 100.000 iteraciones,
-        # el código hace una pregunta:¿El reloj ya pasó el minuto j (desde_reloj) Y todavía no llegamos al tope
-        # de i filas (filas_mostrar)?¿O me pasaste la orden de forzar? (Esto lo usamos para inyectar la fila de "FIN SIMULACIÓN" al final).
-        # Si la respuesta es no, ignora el bloque de abajo y el motor avanza rapidísimo. Si es sí, entra a procesar los textos.
         if forzar or (reloj >= params['desde_reloj'] and len(datos_grilla) < params['filas_mostrar']):
-            # Calcula las estadísticas del sistema en ese instante exacto. El condicional if ... > 0 else 0.0 (Operador Ternario) es un escudo
-            # protector: si en el minuto 0 querés dividir por cero porque todavía no llegó ni salió nadie, Python tiraría un
-            # ZeroDivisionError y el programa crashearía. Esto lo evita devolviendo 0.0.
             prom_perm = round((estado['acum_permanencia'] / estado['salidas']), 2) if estado['salidas'] > 0 else 0.0
             porc_rechazos = round((estado['rechazos'] / estado['llegadas']) * 100, 2) if estado['llegadas'] > 0 else 0.0
 
-            # Limpieza de decimales para los números aleatorios.
-            # round(..., 4): Corta el número a 4 decimales. isinstance(..., float): Verifica si el dato es un número decimal.
-            # Esto es crucial porque a veces, si el evento no requiere un RND (por ejemplo, cuando alguien termina de leer),
-            # la variable vale "" (texto vacío). Si intentás hacerle round() a un texto vacío, el programa se rompe.
             r_rnd_tipo = round(rnd_tipo, 4) if isinstance(rnd_tipo, float) else rnd_tipo
             r_rnd_atenc = round(rnd_atenc, 4) if isinstance(rnd_atenc, float) else rnd_atenc
             r_t_atenc = round(t_atenc, 2) if isinstance(t_atenc, float) else t_atenc
@@ -124,10 +108,6 @@ def simular_sistema(params):
             r_paginas = int(paginas) if isinstance(paginas, float) else paginas
             r_t_lect = round(t_lect, 2) if isinstance(t_lect, float) else t_lect
 
-            # Empaquetado dinámico de los slots
-            # Recorre el array que representa los espacios físicos (por ejemplo, los 20 lugares permitidos).Si el espacio s es None
-            # (está vacío), mete 4 celdas en blanco. Si hay un ClienteSimpy ocupando el lugar, le extrae sus
-            # atributos (id, llegada, estado, fin_lect) para ponerlos en las columnas.
             datos_slots = []
             for s in slots_clientes:
                 if s is None:
@@ -135,8 +115,7 @@ def simular_sistema(params):
                 else:
                     datos_slots.extend([s.id, formato_hora(s.llegada), s.estado, s.fin_lect])
 
-            # [COMANDO]: tuple(). Guardamos la fila como una Tupla, no como Lista [].
-            # [POR QUÉ]: Las tuplas en Python son de solo lectura (inmutables), ocupan menos RAM y Tkinter las exige.
+            # Creamos la fila "candidata" con los datos más actualizados
             fila = (
                        estado['num_evento'], evento_str, formato_hora(reloj),
                        r_rnd_tipo, tipo_atenc, r_rnd_atenc, r_t_atenc, r_rnd_queda, se_queda,
@@ -145,12 +124,42 @@ def simular_sistema(params):
                        estado['llegadas'], estado['rechazos'], porc_rechazos, estado['salidas'], prom_perm
                    ) + tuple(datos_slots)
 
-            datos_grilla.append(fila)
+            # =========================================================================
+            # [NUEVA LÓGICA]: COMBINADOR DE EVENTOS SIMULTÁNEOS (Pedido del Profesor)
+            # =========================================================================
+            hora_actual_str = formato_hora(reloj)
 
-        # Suma 1 al contador de eventos (num_evento). El if not forzar está para que, cuando inyectemos la fila artificial
-        # de "FIN SIMULACIÓN", no nos gaste un número de evento nuevo, sino que comparta el mismo número del último evento real ocurrido.
-        if not forzar:
-            estado['num_evento'] += 1
+            # Comparamos si el reloj de esta fila es idéntico al de la última fila guardada
+            if len(datos_grilla) > 0 and datos_grilla[-1][2] == hora_actual_str and not forzar:
+
+                # 1. Recuperamos la fila anterior para fusionarla
+                ultima_fila = datos_grilla[-1]
+                fila_lista = list(fila)
+
+                # 2. Mantenemos el N° de Evento original (para que no salte)
+                fila_lista[0] = ultima_fila[0]
+
+                # 3. Concatenamos los nombres de los eventos (Ej: "Llegada (Ped) + Inicia Atenc")
+                fila_lista[1] = ultima_fila[1] + " + " + fila_lista[1]
+
+                # 4. Rescatamos los RNDs: Si la fila nueva no trajo un RND (porque es el evento
+                # de inicio de atención), rescatamos el RND de la llegada que estaba en la fila vieja.
+                # (Las columnas del 3 al 12 son estrictamente las de las variables aleatorias)
+                for i in range(3, 13):
+                    if (fila_lista[i] == "" or fila_lista[i] == "-") and ultima_fila[i] != "" and ultima_fila[i] != "-":
+                        fila_lista[i] = ultima_fila[i]
+
+                # 5. Las columnas de Estado (Empleados, Colas, Contadores y Clientes) no se rescatan,
+                # se dejan las de la nueva 'fila' porque representan la foto final actualizada de ese instante.
+
+                # 6. Sobrescribimos la última fila en la grilla en lugar de hacer .append()
+                datos_grilla[-1] = tuple(fila_lista)
+
+            else:
+                # Si el reloj sí avanzó un minuto distinto, guardamos una fila totalmente nueva normal
+                datos_grilla.append(fila)
+                if not forzar:
+                    estado['num_evento'] += 1
 
     def proceso_cliente(id_cliente):
         """
@@ -487,8 +496,6 @@ class VentanaSimulacion:
                 ("K (Pág >= 300)", "k3", 70)
             ])
         ]
-
-
 
         col_offset = 0
         for seccion, campos in configs:
