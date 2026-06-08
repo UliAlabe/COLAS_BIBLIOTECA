@@ -75,12 +75,13 @@ class ClienteSimpy:
 
 def simular_sistema(params):
     # Diccionario para mantener los contadores acumulativos vivos durante toda la ejecución.
-    # [NUEVA COLUMNA]: Agregamos fin_atenc_emp1 y fin_atenc_emp2 al diccionario principal.
+    # [NUEVA COLUMNA]: Agregamos fin_atenc_emp1, fin_atenc_emp2 y proxima_llegada al diccionario principal.
     estado = {
         'num_evento': 1, 'llegadas': 0, 'rechazos': 0, 'salidas': 0,
         'acum_permanencia': 0.0, 'leyendo': 0,
         'emp1': "Libre", 'fin_atenc_emp1': "",
-        'emp2': "Libre", 'fin_atenc_emp2': ""
+        'emp2': "Libre", 'fin_atenc_emp2': "",
+        'proxima_llegada': params['t_llegada']  # Arranca con la primera llegada programada
     }
 
     capacidad = params['capacidad']
@@ -135,7 +136,10 @@ def simular_sistema(params):
             r_paginas = int(rnds['paginas']) if isinstance(rnds['paginas'], float) else rnds['paginas']
             r_t_lect = round(rnds['t_lect'], 2) if isinstance(rnds['t_lect'], float) else rnds['t_lect']
 
-            # [NUEVA COLUMNA]: Formateo visual para las columnas de Fin de Atención de los Empleados
+            # [NUEVA COLUMNA]: Formateo visual para Próxima Llegada y Fin de Atención
+            p_llegada = snap.get('proxima_llegada', "")
+            p_llegada_str = formato_hora(p_llegada) if isinstance(p_llegada, float) else p_llegada
+
             f_at1 = snap.get('fin_atenc_emp1', "")
             f_at1_str = formato_hora(f_at1) if isinstance(f_at1, float) else f_at1
 
@@ -154,7 +158,7 @@ def simular_sistema(params):
             eventos_unidos = " + ".join(buffer_fila['eventos']) if buffer_fila else "FIN SIMULACIÓN"
 
             fila = (
-                       estado['num_evento'], eventos_unidos, formato_hora(buffer_reloj),
+                       estado['num_evento'], eventos_unidos, formato_hora(buffer_reloj), p_llegada_str,
                        r_rnd_tipo, rnds['tipo_atenc'], r_rnd_atenc, r_t_atenc, r_rnd_queda, rnds['se_queda'],
                        r_rnd_pag, r_paginas, rnds['k_aplicado'], r_t_lect,
                        snap.get('emp1', "Libre"), f_at1_str, snap.get('emp2', "Libre"), f_at2_str,
@@ -206,13 +210,14 @@ def simular_sistema(params):
 
         # [CORRECCIÓN BUG DE ESTADO]: Congelamos la foto del sistema al momento de este evento.
         # Convertimos los estados a str() para evitar que se pisen en la memoria.
-        # [NUEVA COLUMNA]: Capturamos también los fin_atenc en la foto de la memoria.
+        # [NUEVA COLUMNA]: Capturamos también proxima_llegada y los fin_atenc en la foto de la memoria.
         buffer_fila['estado_snapshot'] = {
             'emp1': str(estado['emp1']), 'fin_atenc_emp1': estado['fin_atenc_emp1'],
             'emp2': str(estado['emp2']), 'fin_atenc_emp2': estado['fin_atenc_emp2'],
             'queue_len': len(empleados.queue),
             'leyendo': estado['leyendo'], 'llegadas': estado['llegadas'], 'rechazos': estado['rechazos'],
             'salidas': estado['salidas'], 'acum_permanencia': estado['acum_permanencia'],
+            'proxima_llegada': estado['proxima_llegada'],
             'slots': [(s.id, s.llegada, s.estado, s.fin_lect) if s else None for s in slots_clientes]
         }
 
@@ -429,6 +434,10 @@ def simular_sistema(params):
         id_gen = 1
         # El while es un ciclo que valida dos condiciones de corte de la rúbrica.
         while env.now <= params['tiempo_simulacion'] and id_gen <= params['limite_iteraciones']:
+            # [NUEVA COLUMNA]: Calculamos y guardamos la próxima llegada ANTES de lanzar al cliente,
+            # para que cuando el cliente tome la "foto" del Vector de Estado, ya sepa a qué hora viene el que sigue.
+            estado['proxima_llegada'] = env.now + params['t_llegada']
+
             # [COMANDO]: env.process() inyecta la función cliente como un hilo independiente.
             env.process(proceso_cliente(id_gen))
             id_gen += 1
@@ -444,9 +453,9 @@ def simular_sistema(params):
     commitear_buffer_a_grilla(forzar=True)
 
     # Armado estático de los encabezados de la tabla
-    # [NUEVA COLUMNA]: Añadimos "Fin Atenc 1" y "Fin Atenc 2" en la base.
+    # [NUEVA COLUMNA]: Añadimos "Próx Llegada", "Fin Atenc 1" y "Fin Atenc 2" en la base.
     columnas_base = [
-        "N° Evento", "Evento", "Reloj",
+        "N° Evento", "Evento", "Reloj", "Próx Llegada",
         "RND Tipo", "Tipo Atenc (RND)", "RND Atenc", "T. Atenc", "RND Queda", "¿Se Queda?",
         "RND Pág", "Páginas", "Valor K", "T. Lectura (min)",
         "Emp 1", "Fin Atenc 1", "Emp 2", "Fin Atenc 2", "Cola (Q)", "Leyendo (Q)",
@@ -660,7 +669,9 @@ class VentanaSimulacion:
                 w = 40
             elif "Emp" in col:
                 w = 110
-            elif "Fin Atenc" in col:  # [NUEVA COLUMNA]: Regla visual para que el ancho encaje bien
+            elif "Fin Atenc" in col:
+                w = 85
+            elif "Próx Llegada" in col:  # [NUEVA COLUMNA]: Ajuste visual para que se vea el reloj bien
                 w = 85
             elif "Fila" in col or "Leyendo" in col or "Cola" in col:
                 w = 60
