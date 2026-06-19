@@ -157,7 +157,23 @@ def simular_sistema(params):
                 else:
                     datos_slots.extend([s[0], formato_hora(s[1]), s[2], s[3]])
 
-            eventos_unidos = " + ".join(buffer_fila['eventos']) if buffer_fila else "FIN SIMULACIÓN"
+            # ====================================================================================
+            # [FILTRO VISUAL INTELIGENTE]: Limpieza de tránsitos nulos por concurrencia de SimPy.
+            # ====================================================================================
+            if buffer_fila:
+                eventos_lista = buffer_fila['eventos']
+
+                # Buscamos cuántas veces ocurre el par de eventos en el mismo milisegundo
+                pares_borrar = min(eventos_lista.count("Pasa a Fila (Dev)"),
+                                   eventos_lista.count("Inicia Atenc (Dev Post-Lect)"))
+
+                # Eliminamos solo el "Pasa a fila" para que la lectura quede limpia: Fin Lectura + Inicia Atenc.
+                for _ in range(pares_borrar):
+                    eventos_lista.remove("Pasa a Fila (Dev)")
+
+                eventos_unidos = " + ".join(eventos_lista)
+            else:
+                eventos_unidos = "FIN SIMULACIÓN"
 
             fila = (
                        estado['num_evento'], eventos_unidos, formato_hora(buffer_reloj), p_llegada_str,
@@ -299,9 +315,6 @@ def simular_sistema(params):
                 # [ALGORITMO]: Distribución Uniforme Continua. random.uniform() aplica la fórmula: a + RND * (b - a)
                 t_at = params['u_dev_a'] + rnd_a * (params['u_dev_b'] - params['u_dev_a'])
             else:
-                # =========================================================================
-                # [RESTAURACIÓN CONSULTA DISCRETA]: Volvemos a la Distribución Uniforme
-                # =========================================================================
                 rnd_a = random.random()
                 t_at = params['u_cons_a'] + rnd_a * (params['u_cons_b'] - params['u_cons_a'])
 
@@ -410,6 +423,8 @@ def simular_sistema(params):
             with empleados.request() as req_dev:
 
                 cliente.estado = "Fila (Dev)"
+
+                # Siempre logueamos el Pasa a Fila en el Buffer (el Filtro Inteligente lo borrará si el cliente espera 0.0 segs)
                 registrar_fila("Pasa a Fila (Dev)")
 
                 yield req_dev
@@ -424,7 +439,7 @@ def simular_sistema(params):
                     id_emp = 1
                     estado['emp1'] = f"Ocup (ID {id_cliente})"
 
-                cliente.estado = "Atend. (Dev-Post Lect)"
+                cliente.estado = "Atend. (Dev-Post Lectura)"
 
                 rnd_a2 = random.random()
                 t_at2 = params['u_dev_a'] + rnd_a2 * (params['u_dev_b'] - params['u_dev_a'])
