@@ -1,0 +1,13 @@
+# Python
+*.pyc
+__pycache__
+
+# IA
+.claude
+
+# MacOS
+.DS_Store
+.DS-Store
+
+# documentos mateo
+docs-mateo/

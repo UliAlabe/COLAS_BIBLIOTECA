@@ -647,40 +647,94 @@ class VentanaSimulacion:
 
     def obtener_parametros(self):
         try:
+            tiempo_simulacion = float(self.vars['tiempo_simulacion'].get())
+            limite_iteraciones = int(self.vars['limite_iteraciones'].get())
+            desde_reloj = float(self.vars['desde_reloj'].get())
+            filas_mostrar = int(self.vars['filas_mostrar'].get())
+            h = float(self.vars['h'].get())
+            capacidad = int(self.vars['capacidad'].get())
+            t_llegada = float(self.vars['t_llegada'].get())
             p_pedir = float(self.vars['prob_pedir'].get())
             p_dev = float(self.vars['prob_devolver'].get())
             p_cons = float(self.vars['prob_consultar'].get())
             p_queda = float(self.vars['prob_queda'].get())
-
-            if (p_pedir + p_dev + p_cons) != 100.0:
-                messagebox.showerror("Error", "Las probabilidades deben sumar EXACTAMENTE 100%.")
-                return None
-
-            return {
-                'tiempo_simulacion': float(self.vars['tiempo_simulacion'].get()),
-                'limite_iteraciones': int(self.vars['limite_iteraciones'].get()),
-                'desde_reloj': float(self.vars['desde_reloj'].get()),
-                'filas_mostrar': int(self.vars['filas_mostrar'].get()),
-                'h': float(self.vars['h'].get()),
-                'capacidad': int(self.vars['capacidad'].get()),
-                't_llegada': float(self.vars['t_llegada'].get()),
-                'p_pedir': p_pedir / 100.0,
-                'p_dev': p_dev / 100.0,
-                'p_queda': p_queda / 100.0,
-                'm_pedir': float(self.vars['media_pedir'].get()),
-                'u_dev_a': float(self.vars['unif_dev_a'].get()),
-                'u_dev_b': float(self.vars['unif_dev_b'].get()),
-                'u_cons_a': float(self.vars['unif_cons_a'].get()),
-                'u_cons_b': float(self.vars['unif_cons_b'].get()),
-                'u_pag_a': float(self.vars['unif_pag_a'].get()),
-                'u_pag_b': float(self.vars['unif_pag_b'].get()),
-                'k1': float(self.vars['k1'].get()),
-                'k2': float(self.vars['k2'].get()),
-                'k3': float(self.vars['k3'].get())
-            }
+            m_pedir = float(self.vars['media_pedir'].get())
+            u_dev_a = float(self.vars['unif_dev_a'].get())
+            u_dev_b = float(self.vars['unif_dev_b'].get())
+            u_cons_a = float(self.vars['unif_cons_a'].get())
+            u_cons_b = float(self.vars['unif_cons_b'].get())
+            u_pag_a = float(self.vars['unif_pag_a'].get())
+            u_pag_b = float(self.vars['unif_pag_b'].get())
+            k1 = float(self.vars['k1'].get())
+            k2 = float(self.vars['k2'].get())
+            k3 = float(self.vars['k3'].get())
         except ValueError:
             messagebox.showerror("Error", "Ingresaste texto donde va un número.")
             return None
+
+        errores = []
+
+        if tiempo_simulacion <= 0:
+            errores.append("X (tiempo a simular) debe ser > 0.")
+        if limite_iteraciones <= 0:
+            errores.append("N (máx. llegadas) debe ser > 0.")
+        if filas_mostrar <= 0:
+            errores.append("i (cant. filas a mostrar) debe ser > 0.")
+        if desde_reloj < 0:
+            errores.append("j (mostrar desde min.) debe ser >= 0.")
+        if desde_reloj >= tiempo_simulacion:
+            errores.append("j (mostrar desde min.) debe ser menor que X (tiempo a simular).")
+        if h <= 0:
+            errores.append("h (paso Euler) debe ser > 0.")
+        if capacidad <= 0:
+            errores.append("Capacidad máxima debe ser > 0.")
+        if t_llegada <= 0:
+            errores.append("Llegadas (Cte) debe ser > 0.")
+        if abs(p_pedir + p_dev + p_cons - 100.0) > 0.01:
+            errores.append("Las probabilidades (% Pedir + % Devolver + % Consultar) deben sumar exactamente 100%.")
+        if not (0 <= p_queda <= 100):
+            errores.append("% Se Queda a Leer debe estar entre 0% y 100%.")
+        if m_pedir <= 0:
+            errores.append("Media Pedir Exp(-) debe ser > 0.")
+        if u_dev_a >= u_dev_b:
+            errores.append("Unif. Dev: A debe ser menor que B.")
+        if u_cons_a >= u_cons_b:
+            errores.append("Unif. Cons: A debe ser menor que B.")
+        if u_pag_a >= u_pag_b:
+            errores.append("Unif. Pág: A debe ser menor que B.")
+        if k1 <= 0:
+            errores.append("K (Pág < 200) debe ser > 0.")
+        if k2 <= 0:
+            errores.append("K (Pág < 300) debe ser > 0.")
+        if k3 <= 0:
+            errores.append("K (Pág >= 300) debe ser > 0.")
+
+        if errores:
+            messagebox.showerror("Error de validación", "\n".join(errores))
+            return None
+
+        return {
+            'tiempo_simulacion': tiempo_simulacion,
+            'limite_iteraciones': limite_iteraciones,
+            'desde_reloj': desde_reloj,
+            'filas_mostrar': filas_mostrar,
+            'h': h,
+            'capacidad': capacidad,
+            't_llegada': t_llegada,
+            'p_pedir': p_pedir / 100.0,
+            'p_dev': p_dev / 100.0,
+            'p_queda': p_queda / 100.0,
+            'm_pedir': m_pedir,
+            'u_dev_a': u_dev_a,
+            'u_dev_b': u_dev_b,
+            'u_cons_a': u_cons_a,
+            'u_cons_b': u_cons_b,
+            'u_pag_a': u_pag_a,
+            'u_pag_b': u_pag_b,
+            'k1': k1,
+            'k2': k2,
+            'k3': k3
+        }
 
     def ejecutar_simulacion(self):
         params = self.obtener_parametros()
