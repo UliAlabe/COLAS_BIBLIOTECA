@@ -161,7 +161,7 @@ def simular_sistema(params):
             # [FILTRO ESTRICTO DE EVENTOS PRIMARIOS]: Lista blanca absoluta.
             # Solo permitimos en la columna de texto aquellos eventos que hacen saltar el reloj.
             # ====================================================================================
-            if buffer_fila:
+            if buffer_fila and not forzar:
                 eventos_lista = buffer_fila['eventos']
                 eventos_primarios = []
 
@@ -169,13 +169,15 @@ def simular_sistema(params):
                     if "Llegada" in e or "Fin Atenc" in e or "Fin Lectura" in e:
                         eventos_primarios.append(e)
 
-                # Salvaguarda: si ocurre un instante artificial sin primarios, dejamos la lista original
                 if not eventos_primarios:
                     eventos_primarios = eventos_lista
 
                 eventos_unidos = " + ".join(eventos_primarios)
             else:
                 eventos_unidos = "FIN SIMULACIÓN"
+
+                # [OCULTAR PRÓXIMA LLEGADA]: Limpiamos la hora en la última fila del sistema
+                p_llegada_str = "-"
 
             fila = (
                        estado['num_evento'], eventos_unidos, formato_hora(buffer_reloj), p_llegada_str,
