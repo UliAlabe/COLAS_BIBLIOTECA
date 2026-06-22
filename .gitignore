@@ -4,6 +4,8 @@ __pycache__
 
 # IA
 .claude
+CLAUDE.md
+AGENTS.md
 
 # MacOS
 .DS_Store
