@@ -5,13 +5,31 @@
 # =============================================================
 # "pip install "simpy" o "python -m pip install simpy" para poder correr
 
-import tkinter as tk
-from tkinter import ttk, messagebox
-import random
-import math
-import simpy
+import tkinter as tk  # [COMANDO]: Importa la librería base para interfaces de escritorio nativas en Python.
+from tkinter import ttk, messagebox  # [COMANDO]: Importa widgets estilizados (Treeview, botones) y ventanas de alerta.
+import random  # [LIBRERÍA]: Motor estadístico base. Genera números pseudoaleatorios entre 0 y 1.
+import math  # [LIBRERÍA]: Funciones matemáticas en C. Acá se usa para el logaritmo natural (ln).
+import simpy  # [LIBRERÍA]: Framework de simulación discreta. Reemplaza el bucle de "salto de reloj" manual.
 
 
+# El sistema es un conjunto de procesos individuales durmiendo. SimPy solo gasta energía en despertar a la persona que le
+# toca actuar, deja que haga su movimiento, le saca una foto al tablero completo para tu grilla, y la vuelve a mandar a dormir.
+# El mecanismo de "Checkpoints" (SimPy + Python)
+# La Pausa (yield de Python):
+# Cuando el código lee la palabra yield, Python congela la función del cliente en esa línea exacta. Hace un "checkpoint" en la
+# RAM guardando todas las variables (id, rnd, etc.) tal cual están y libera el procesador.
+
+# La Agenda (Motor SimPy):
+# Al hacer yield env.timeout(15), el cliente le avisa a SimPy: "Anotame en tu agenda y despertame dentro de 15 minutos". El cliente queda dormido.
+#
+# El Salto Temporal (Eficiencia):
+# SimPy no avanza el reloj minuto a minuto. Mira su agenda oculta, saltea  el tiempo muerto donde no pasa nada, y hace que el reloj salte
+# directamente al instante del próximo evento programado.
+#
+# El Despertar (Resume):
+# Cuando el reloj global llega al minuto anotado, SimPy va a la RAM, carga el checkpoint de ese cliente específico, y la función
+# arranca exactamente en la línea debajo del yield, con todos sus datos intactos.
+#
 # ==========================================
 # 1. LÓGICA DE SIMULACIÓN (BACKEND)
 # ==========================================
@@ -19,51 +37,75 @@ import simpy
 def formato_hora(minutos_float):
     """
     [ALGORITMO]: Conversión de formato continuo (decimal) a sexagesimal (HH:MM:SS).
+    [POR QUÉ]: SimPy maneja el tiempo como un número de punto flotante (ej: 13.5 minutos),
+    pero la rúbrica exige que el Vector de Estado sea legible para un humano.
     """
     if minutos_float == float('inf') or minutos_float == "" or minutos_float == "-":
         return "-"
 
+    # [COMANDO]: '//' hace división entera (cuántas horas completas).
     h = int(minutos_float // 60)
+    # [COMANDO]: '%' devuelve el resto (los minutos que no llegaron a formar una hora).
     m = int(minutos_float % 60)
+    # [COMANDO]: round() redondea para corregir la basura de la precisión flotante de Python.
     s = int(round((minutos_float * 60) % 60))
 
     if s == 60: s = 0; m += 1
     if m == 60: m = 0; h += 1
 
+    # [COMANDO]: f"{x:02d}" interpola la variable 'x' forzando a que tenga al menos 2 dígitos (ej: 0 -> "00").
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 class ClienteSimpy:
+    """
+    [ALGORITMO]: Programación Orientada a Objetos (POO).
+    [POR QUÉ]: En vez de tener 20 arrays sueltos rastreando la llegada, estado y fin de cada persona,
+    creamos un objeto "Ficha" por cliente. Cuando el cliente se bloquea en una cola de SimPy,
+    el objeto retiene sus atributos para que la grilla pueda imprimirlos.
+    """
+
     def __init__(self, id_cliente, hora_llegada, slot):
         self.id = id_cliente
         self.llegada = hora_llegada
-        self.slot = slot
+        self.slot = slot  # Índice de la columna visual que ocupará (0 a 19).
         self.estado = "En Cola"
         self.fin_lect = ""
 
 
 def simular_sistema(params):
+    # Diccionario para mantener los contadores acumulativos vivos durante toda la ejecución.
     estado = {
         'num_evento': 1, 'llegadas': 0, 'rechazos': 0, 'salidas': 0,
         'acum_permanencia': 0.0, 'leyendo': 0,
         'emp1': "Libre", 'fin_atenc_emp1': "",
         'emp2': "Libre", 'fin_atenc_emp2': "",
-        'proxima_llegada': params['t_llegada']
+        'proxima_llegada': params['t_llegada']  # Arranca con la primera llegada programada
     }
 
     capacidad = params['capacidad']
-    slots_clientes = [None] * capacidad
+    slots_clientes = [None] * capacidad  # [ALGORITMO]: Array de longitud fija para representar físicamente el local.
 
-    datos_grilla = []
-    datos_euler = []
+    datos_grilla = []  # Almacenará las tuplas finales que van a la UI Principal (Vector Estado).
+    datos_euler = []  # [EULER AUDITORÍA]: Almacenará las iteraciones continuas paso a paso para la pestaña 2.
 
+    # [COMANDO]: simpy.Environment() crea el "reloj global" y maneja la agenda de eventos ocultos.
     env = simpy.Environment()
+    # [COMANDO]: simpy.Resource(capacity=2) crea una "ventanilla" con 2 empleados.
+    # [POR QUÉ]: SimPy hace la lógica de la fila FIFO automáticamente sin que nosotros armemos listas (append/pop).
     empleados = simpy.Resource(env, capacity=2)
 
+    # =========================================================================================
+    # Variables para el Buffer de Instantes (Vector de Estado Estricto)
+    # [APUNTE DE DEFENSA - POR QUÉ HAY UN BUFFER]:
+    # El buffer se hace porque hay varios clientes que comitean algo en el mismo instante de tiempo.
+    # Si no hago el buffer, genera filas distintas, lo cual no quiero. Es por ello que hago el buffer,
+    # para que comiteen todos allí y el buffer, cuando detecta que hay un salto en el tiempo,
+    # imprime lo anterior unificado.
+    # =========================================================================================
     buffer_reloj = -1.0
     buffer_fila = None
 
-    # [NUEVA COLUMNA EULER]: Agregamos la variable al diccionario default
     def_rnds = {
         'rnd_tipo': "", 'tipo_atenc': "", 'rnd_atenc': "", 't_atenc': "",
         'rnd_queda': "", 'se_queda': "", 'rnd_pag': "", 'paginas': "",
@@ -71,11 +113,17 @@ def simular_sistema(params):
     }
 
     def commitear_buffer_a_grilla(forzar=False):
+        """
+        Esta función agarra el buffer lleno (la suma de todos los eventos
+        que ocurrieron en un mismo instante) y recién ahí genera la fila final para la grilla.
+        """
         nonlocal buffer_fila
         if buffer_fila is None and not forzar: return
 
+        # [ALGORITMO]: Filtro de Memoria O(1) (Parámetros i, j).
         if forzar or (buffer_reloj >= params['desde_reloj'] and len(datos_grilla) < params['filas_mostrar']):
 
+            # Usamos el estado congelado en el snapshot (la última y definitiva foto del milisegundo)
             snap = buffer_fila['estado_snapshot'] if buffer_fila else estado
 
             acum_perm = round(snap.get('acum_permanencia', 0.0), 2)
@@ -91,12 +139,11 @@ def simular_sistema(params):
             r_rnd_queda = round(rnds['rnd_queda'], 4) if isinstance(rnds['rnd_queda'], float) else rnds['rnd_queda']
             r_rnd_pag = round(rnds['rnd_pag'], 4) if isinstance(rnds['rnd_pag'], float) else rnds['rnd_pag']
             r_paginas = int(rnds['paginas']) if isinstance(rnds['paginas'], float) else rnds['paginas']
-
-            # [NUEVA COLUMNA EULER]: Extraemos y redondeamos el tiempo de integración
             r_t_int = round(rnds['t_integracion'], 4) if isinstance(rnds['t_integracion'], float) else rnds[
                 't_integracion']
             r_t_lect = round(rnds['t_lect'], 2) if isinstance(rnds['t_lect'], float) else rnds['t_lect']
 
+            # Formateo visual para Próxima Llegada y Fin de Atención
             p_llegada = snap.get('proxima_llegada', "")
             p_llegada_str = formato_hora(p_llegada) if isinstance(p_llegada, float) else p_llegada
 
@@ -106,6 +153,7 @@ def simular_sistema(params):
             f_at2 = snap.get('fin_atenc_emp2', "")
             f_at2_str = formato_hora(f_at2) if isinstance(f_at2, float) else f_at2
 
+            # Empaquetado dinámico de los slots usando el snapshot congelado
             datos_slots = []
             slots_congelados = snap.get('slots', [None] * capacidad)
             for s in slots_congelados:
@@ -114,6 +162,10 @@ def simular_sistema(params):
                 else:
                     datos_slots.extend([s[0], formato_hora(s[1]), s[2], s[3]])
 
+            # ====================================================================================
+            # [FILTRO ESTRICTO DE EVENTOS PRIMARIOS]: Lista blanca absoluta.
+            # Solo permitimos en la columna de texto aquellos eventos que hacen saltar el reloj.
+            # ====================================================================================
             if buffer_fila and not forzar:
                 eventos_lista = buffer_fila['eventos']
                 eventos_primarios = []
@@ -122,6 +174,7 @@ def simular_sistema(params):
                     if "Llegada" in e or "Fin Atenc" in e or "Fin Lectura" in e:
                         eventos_primarios.append(e)
 
+                # Salvaguarda: si ocurre un instante artificial sin primarios, dejamos la lista original
                 if not eventos_primarios:
                     eventos_primarios = eventos_lista
 
@@ -130,7 +183,6 @@ def simular_sistema(params):
                 eventos_unidos = "FIN SIMULACIÓN"
                 p_llegada_str = "-"
 
-            # [NUEVA COLUMNA EULER]: Insertamos r_t_int antes de r_t_lect en la tupla visual
             fila = (
                        estado['num_evento'], eventos_unidos, formato_hora(buffer_reloj), p_llegada_str,
                        r_rnd_tipo, rnds['tipo_atenc'], r_rnd_atenc, r_t_atenc, r_rnd_queda, rnds['se_queda'],
@@ -143,26 +195,38 @@ def simular_sistema(params):
 
             datos_grilla.append(fila)
 
+        # Suma 1 al contador de eventos. El if not forzar está para que "FIN SIMULACIÓN" no gaste un número.
         if not forzar:
             estado['num_evento'] += 1
 
-    # [NUEVA COLUMNA EULER]: Se agrega el parámetro t_integracion
+    # [APUNTE DE DEFENSA - FUNCIONES ANIDADAS (CLOSURES)]:
+    # Lo defino adentro para no tener que andar parametrizando las matrices o el resto de variables
+    # cada vez que invoco a la función, sino que directamente las detecta porque está al mismo nivel,
+    # dentro de la función padre.
     def registrar_fila(evento_str, rnd_tipo="", tipo_atenc="", rnd_atenc="", t_atenc="", rnd_queda="", se_queda="",
                        rnd_pag="", paginas="", k_aplicado="", t_integracion="", t_lect=""):
+        """
+        Acumula la info en el buffer,
+        y hace 'commit' solo cuando el reloj de SimPy da el salto al próximo evento.
+        """
         nonlocal buffer_reloj, buffer_fila
         reloj_actual = env.now
 
+        # Si el reloj avanzó, significa que el instante temporal anterior ya terminó de procesar TODO. Commiteamos.
         if reloj_actual > buffer_reloj and buffer_fila is not None:
             commitear_buffer_a_grilla(forzar=False)
-            buffer_fila = None
+            buffer_fila = None  # Limpiamos el buffer para la nueva hora
 
         buffer_reloj = reloj_actual
 
+        # Inicializamos el buffer para el nuevo instante si está vacío
         if buffer_fila is None:
             buffer_fila = {'eventos': [], 'rnds': def_rnds.copy(), 'estado_snapshot': {}}
 
+        # Acumulamos el string del evento (para que queden sumados con un '+')
         buffer_fila['eventos'].append(evento_str)
 
+        # Acumulamos las variables aleatorias sin borrar las que aportaron los eventos anteriores de este minuto
         if rnd_tipo != "": buffer_fila['rnds']['rnd_tipo'] = rnd_tipo
         if tipo_atenc != "": buffer_fila['rnds']['tipo_atenc'] = tipo_atenc
         if rnd_atenc != "": buffer_fila['rnds']['rnd_atenc'] = rnd_atenc
@@ -172,10 +236,10 @@ def simular_sistema(params):
         if rnd_pag != "": buffer_fila['rnds']['rnd_pag'] = rnd_pag
         if paginas != "": buffer_fila['rnds']['paginas'] = paginas
         if k_aplicado != "": buffer_fila['rnds']['k_aplicado'] = k_aplicado
-        # [NUEVA COLUMNA EULER]: Lo guardamos en el buffer del instante
         if t_integracion != "": buffer_fila['rnds']['t_integracion'] = t_integracion
         if t_lect != "": buffer_fila['rnds']['t_lect'] = t_lect
 
+        # Congelamos la foto del sistema al momento de este evento.
         buffer_fila['estado_snapshot'] = {
             'emp1': str(estado['emp1']), 'fin_atenc_emp1': estado['fin_atenc_emp1'],
             'emp2': str(estado['emp2']), 'fin_atenc_emp2': estado['fin_atenc_emp2'],
@@ -187,19 +251,31 @@ def simular_sistema(params):
         }
 
     def proceso_cliente(id_cliente):
+        """
+        [ALGORITMO]: Enfoque Orientado a Procesos (Generators en Python).
+        [POR QUÉ]: A diferencia de un while que mueve el reloj minuto a minuto, este bloque
+        describe la "vida" de 1 cliente. Se usa 'yield' para pausar la ejecución de esta
+        función cuando el cliente debe esperar, dejando que otros procesos avancen.
+        """
         reloj_llegada = env.now
+
+        # [COMANDO]: empleados.count (ocupados) + len(empleados.queue) (en fila FIFO oculta).
         personas_adentro = empleados.count + len(empleados.queue) + estado['leyendo']
 
         estado['llegadas'] += 1
         if personas_adentro >= capacidad:
             estado['rechazos'] += 1
             registrar_fila("Llegada (Rechazo)")
-            return
+            return  # [COMANDO]: return corta la ejecución del proceso. El cliente no entra.
 
+        # [APUNTE DE DEFENSA - CREACIÓN DE OBJETO]:
+        # El objeto físico se crea acá y NO en la fábrica, porque lo instancio únicamente después
+        # de validar si hay lugar. Si no, gasto memoria RAM creando un objeto que iba a ser rechazado.
         idx_vacio = slots_clientes.index(None)
         cliente = ClienteSimpy(id_cliente, reloj_llegada, idx_vacio)
         slots_clientes[idx_vacio] = cliente
 
+        # [ALGORITMO]: Monte Carlo puro.
         rnd_t = random.random()
         if rnd_t < params['p_pedir']:
             tipo = "Pedir"
@@ -209,10 +285,19 @@ def simular_sistema(params):
             tipo = "Consultar"
 
         with empleados.request() as peticion:
+
             cliente.estado = f"Fila ({tipo[:3]})"
             registrar_fila(f"Llegada ({tipo})", rnd_tipo=rnd_t, tipo_atenc=tipo)
+
+            # [APUNTE DE DEFENSA - SIN ESPERA (YIELD)]:
+            # Si el empleado está libre, lo toma de una y el yield no actúa (espera 0 segundos).
+            # Luego en el próximo registrar fila habrá otro evento, pero por mi filtro de eventos
+            # primarios, en la tabla solo registro la llegada limpia en texto.
             yield peticion
 
+            # Para SimPy, el recurso empleados es solo un contador abstracto.
+            # Este bloque traduce la capacidad usando un "elif" estricto, para que Python asigne de manera
+            # excluyente el puesto que realmente está vacío y no se pise.
             if estado['emp1'] == "Libre":
                 estado['emp1'] = f"Ocup (ID {id_cliente})"
                 id_emp = 1
@@ -222,16 +307,20 @@ def simular_sistema(params):
 
             cliente.estado = f"Atend. ({tipo[:3]})"
 
+            # implementación del tiempo de atención
             if tipo == "Pedir":
                 rnd_a = random.random()
+                # [ALGORITMO]: Transformada Inversa (Distribución Exponencial). F(x) = -Media * ln(1-RND)
                 t_at = -params['m_pedir'] * math.log(1 - rnd_a)
             elif tipo == "Devolver":
                 rnd_a = random.random()
+                # [ALGORITMO]: Distribución Uniforme Continua. random.uniform() aplica la fórmula: a + RND * (b - a)
                 t_at = params['u_dev_a'] + rnd_a * (params['u_dev_b'] - params['u_dev_a'])
             else:
                 rnd_a = random.random()
                 t_at = params['u_cons_a'] + rnd_a * (params['u_cons_b'] - params['u_cons_a'])
 
+            # Calculamos el tiempo de fin de atención exacto para la matriz
             fin_at = env.now + t_at
             if id_emp == 1:
                 estado['fin_atenc_emp1'] = fin_at
@@ -239,6 +328,8 @@ def simular_sistema(params):
                 estado['fin_atenc_emp2'] = fin_at
 
             registrar_fila(f"Inicia Atenc ({tipo})", rnd_atenc=rnd_a, t_atenc=t_at)
+
+            # env.timeout(t_at) crea un evento retrasado programado para ejecutarse.
             yield env.timeout(t_at)
 
             rnd_q = "";
@@ -250,6 +341,9 @@ def simular_sistema(params):
                 else:
                     se_queda = "No"
 
+            # [APUNTE DE DEFENSA - LIBERAR RECURSO]:
+            # Matemáticamente el recurso lo libera SimPy solo al salir del bloque "with", pero visualmente
+            # yo le digo a mi estado que vuelva a decir "Libre" acá para la grilla.
             if id_emp == 1:
                 estado['emp1'] = "Libre"
                 estado['fin_atenc_emp1'] = ""
@@ -258,6 +352,7 @@ def simular_sistema(params):
                 estado['fin_atenc_emp2'] = ""
             registrar_fila(f"Fin Atenc ({tipo})", rnd_queda=rnd_q, se_queda=se_queda)
 
+        # Si entra acá, se sienta a leer.
         if tipo == "Pedir" and se_queda == "Sí":
             estado['leyendo'] += 1
 
@@ -310,7 +405,6 @@ def simular_sistema(params):
             cliente.fin_lect = formato_hora(env.now + t_lect)
             cliente.estado = "Leyendo"
 
-            # [NUEVA COLUMNA EULER]: Enviamos t_euler a la tabla principal
             registrar_fila("Inicia Lectura", rnd_pag=rnd_p, paginas=paginas_target, k_aplicado=k, t_integracion=t_euler,
                            t_lect=t_lect)
 
@@ -353,11 +447,18 @@ def simular_sistema(params):
                     estado['fin_atenc_emp2'] = ""
                 registrar_fila("Fin Atenc (Post-Lect)")
 
+        # [APUNTE DE DEFENSA - ACUMULADOR ASINCRÓNICO]:
+        # El acumulador es asincrónico y se calcula recién cuando un cliente sale del establecimiento.
+        # No guarda el tiempo de uno solo, sino que va sumando los acumuladores de permanencia
+        # de todos los clientes que van terminando.
         estado['salidas'] += 1
         estado['acum_permanencia'] += (env.now - reloj_llegada)
         slots_clientes[cliente.slot] = None
         registrar_fila("Sale Sistema")
 
+    # [APUNTE DE DEFENSA - LA FÁBRICA]:
+    # El generador de llegadas es la fábrica de los clientes. Es decir, crea el ID y luego
+    # lo "prende" (env.process) inyectándolo en la función proceso_cliente.
     def generador_llegadas():
         id_gen = 1
         while env.now <= params['tiempo_simulacion'] and id_gen <= params['limite_iteraciones']:
@@ -371,7 +472,6 @@ def simular_sistema(params):
 
     commitear_buffer_a_grilla(forzar=True)
 
-    # [NUEVA COLUMNA EULER]: Agregado a las columnas base
     columnas_base = [
         "N° Evento", "Evento", "Reloj", "Próx Llegada",
         "RND Tipo", "Tipo Atenc (RND)", "RND Atenc", "T. Atenc", "RND Queda", "¿Se Queda?",
@@ -616,7 +716,6 @@ class VentanaSimulacion:
                 w = 75
             elif "Páginas" in col or "Valor K" in col:
                 w = 65
-            # [NUEVA COLUMNA EULER]: Ancho configurado en frontend
             elif "Integración (t)" in col:
                 w = 95
             elif "T. Lectura" in col:
